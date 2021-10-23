@@ -1,9 +1,14 @@
+#!bin/bash
 sudo apt update && sudo apt install postgresql postgresql-contrib -y
-sudo su - postgres
-createuser -s cloud -W
+export PGPASSWORD='cloud'
+echo "export PGPASSWORD='cloud'" >> $HOME/.bashrc
+source $HOME/.bashrc
+echo $PGPASSWORD
+sudo -i -u postgres bash << EOF
+createuser -s cloud -w
 createdb -O cloud tasks
-sed -i "s/# listen_addresses = '*'/listen_addresses = '/g" /etc/postgresql/12/main/postgresql.conf
-echo "host all all 0.0.0.0/32 trust" >> /etc/postgresql/12/main/pg_hba.conf
-exit
+echo "listen_addresses = '*'" >> 12/main/postgresql.conf
+echo "host all all 0.0.0.0/32 trust" >> 12/main/pg_hba.conf
+EOF
 sudo ufw allow 5432/tcp
 sudo systemctl restart postgresql
