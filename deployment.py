@@ -19,8 +19,12 @@ class CloudHandler():
         # North Virginia
         self.cfg1 = Config(region_name="us-east-1") # Define region (default is us-east-1)
         self.North_ec2_resource = boto3.resource('ec2', config=self.cfg1) # make ec2 client
-        with open("postgres.sh", "r") as f:
-            self.script_postgres = f.read()
+        with open("mysql.sh", "r") as f:
+            self.script_db = f.read()
+        with open("mysql.sql", "r") as f:
+            self.script_db = self.script_db.replace("SCRIPT_SQL",f.read())
+        with open("mysql.conf.d", "r") as f:
+            self.script_db = self.script_db.replace("MYSQL_CONF",f.read())            
 
         # Ohio
         self.cfg2 = Config(region_name="us-east-2") # Define region (default is us-east-1)
@@ -50,14 +54,20 @@ class CloudHandler():
         self.ubuntu20amiNorth = "ami-09e67e426f25ce0d7"
         self.ubuntu20amiSouth = "ami-00399ec92321828f5"
 
-    # Returns postgres IP address (port is always 5432)
+    # Returns db IP address (port is always 3306)
     def get_db_ip(self) -> str:
         return self.get_running_instances(self.North_ec2_resource)[0].public_ip_address
 
     def update_django_script(self):
         self.script_django = self.script_django.replace("s/node1/IPDB/g", f"s/node1/{self.get_db_ip()}/g", 1)
 
+    def force_delete_all(self):
+        self.delete_all = 1
+        self.delete_db()
+        self.delete_django()
+
     def ask_delete_all(self):
+        if self.delete_all: return
         print("Would you like to delete all existing infrastructure? (y/n)")
         a = input()
         if a.strip().lower() not in ["y", "yes", ""]:
@@ -72,7 +82,7 @@ class CloudHandler():
     @timeit
     def delete_db(self):
         if not self.delete_all: return
-        print("Deleting postgres...")
+        print("Deleting db...")
         filter=[
             {
                 'Name': 'tag:DIP_AUTOMATION_BOTO',
@@ -123,14 +133,14 @@ class CloudHandler():
     def _create_sec_group_db(self):
         security_group = self.North_ec2_resource.create_security_group(
         Description='Allow inbound traffic',
-        GroupName='postgres',
+        GroupName='db',
         TagSpecifications=[
                 {
                     'ResourceType': 'security-group',
                     'Tags': [
                         {
                             'Key': 'Name',
-                            'Value': 'postgres'
+                            'Value': 'db'
                         },
                         self.automation_tag,
                     ]
@@ -147,8 +157,8 @@ class CloudHandler():
 
         security_group.authorize_ingress(
             CidrIp='0.0.0.0/0',
-            FromPort=5432,
-            ToPort=5432,
+            FromPort=3306,
+            ToPort=3306,
             IpProtocol='tcp',
         )
 
@@ -156,8 +166,8 @@ class CloudHandler():
         # security_group.authorize_egress(
         #     IpPermissions=[
         #             {
-        #                 'FromPort': 5432,
-        #                 'ToPort': 5432,
+        #                 'FromPort': 3306,
+        #                 'ToPort': 3306,
         #                 'IpProtocol': 'tcp',
         #                 'IpRanges': [
         #                     {
@@ -184,9 +194,10 @@ class CloudHandler():
                 },
         ],
         ImageId=str(self.ubuntu20amiNorth),
-        InstanceType='t2.medium',
+        InstanceType='t2.micro',
         MaxCount=1,
         MinCount=1,
+        KeyName="DIP",
         Monitoring={
             'Enabled': False
         },
@@ -200,12 +211,12 @@ class CloudHandler():
                     self.automation_tag,
                     {
                         'Key': 'Name',
-                        'Value': 'postgres-db',
+                        'Value': 'db',
                     },
                 ],
             },
         ],
-        UserData=self.script_postgres)
+        UserData=self.script_db)
         instances[0].wait_until_running()
         return instances
 
@@ -278,6 +289,7 @@ class CloudHandler():
         InstanceType='t3.small',
         MaxCount=1,
         MinCount=1,
+        KeyName="DIP_Ohio",
         Monitoring={
             'Enabled': False
         },
@@ -306,14 +318,14 @@ class CloudHandler():
         self.delete_db()
 
         # Sec group
-        print("Creating postgres security group...")
+        print("Creating mysql security group...")
         security_group=self._create_sec_group_db()
 
         # Make instance
-        print("Creating postgres instance...")
+        print("Creating mysql instance...")
         instances = self._create_instance_db(sec_group=security_group)
         instances[0].wait_until_running()
-        print(f"Instance with postgres running on IP {self.get_db_ip()}:5432")
+        print(f"Instance with mysql running on IP {self.get_db_ip()}:3306")
         return
 
     @timeit
@@ -332,11 +344,6 @@ class CloudHandler():
         print(f"Instance with django running on IP {self.get_running_instances(self.South_ec2_resource)[0].public_ip_address}:8080")
         return
 
-    def force_delete_all(self):
-        self.delete_all = 1
-        self.delete_db()
-        self.delete_django()
-
     @timeit
     def construct_ORM(self):
         self.ask_delete_all()
@@ -346,4 +353,8 @@ class CloudHandler():
 
 if __name__ == "__main__":
     cloud = CloudHandler()
-    cloud.force_delete_all()
+    cloud.delete_all = True
+    # cloud.force_delete_all()
+    # cloud.create_db()
+    # cloud.get_db_ip()
+    cloud.construct_ORM()
