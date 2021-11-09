@@ -2,7 +2,6 @@ import boto3
 from botocore.config import Config
 import os
 import time
-
 # Simple timer decorator, meant to show how long each step takes.
 def timeit(function, *args, **kwargs):
     def wrapper(*args, **kwargs):
@@ -53,6 +52,7 @@ class CloudHandler():
         ]
         self.ubuntu20amiNorth = "ami-09e67e426f25ce0d7"
         self.ubuntu20amiSouth = "ami-00399ec92321828f5"
+        self.delete_all = False
 
     # Returns db IP address (port is always 3306)
     def get_db_ip(self) -> str:
@@ -329,7 +329,7 @@ class CloudHandler():
         return
 
     @timeit
-    def create_django(self):
+    def create_django_base(self):
 
         self.delete_django()
 
@@ -345,16 +345,32 @@ class CloudHandler():
         return
 
     @timeit
+    def extract_django_image(self):
+        instance = self.get_running_instances(self.South_ec2_resource)[0]
+        self.django_AMI = instance.create_image(
+            Name="django_orm_image",
+            TagSpecifications=[{
+                'ResourceType':'image',
+                'Tags':[{'Key':'Name','Value':'django_orm_image'},self.automation_tag]
+            }]
+        )
+        instance.terminate()
+        instance.wait_until_terminated()
+
+    @timeit
     def construct_ORM(self):
         self.ask_delete_all()
         if not self.delete_all: return
         self.create_db()
-        self.create_django()
+        self.create_django_base()
+        self.extract_django_image()
 
 if __name__ == "__main__":
     cloud = CloudHandler()
-    cloud.delete_all = True
+    # cloud.delete_all = True
     # cloud.force_delete_all()
     # cloud.create_db()
     # cloud.get_db_ip()
-    cloud.construct_ORM()
+    # cloud.construct_ORM()
+
+# %%
