@@ -118,9 +118,7 @@ class CloudHandler():
         # Sec Groups
         self.log+="Destroying MySQL security group...\n"
         current_groups = self.North_ec2_resource.security_groups.filter(Filters=filter)
-        destroy = [gr.delete() for gr in current_groups]    
-        wait = [gr.wait_until_terminated() for gr in current_groups] 
-        
+        destroy = [gr.delete() for gr in current_groups]           
         return 0
 
     # Delete orm base
@@ -178,7 +176,6 @@ class CloudHandler():
                 time.sleep(10)
                 continue
             break
-        wait = [gr.wait_until_terminated() for gr in current_groups]
         return 0
 
     # Delete autoscaling group (if exists)
@@ -625,7 +622,7 @@ class CloudHandler():
             ],
         )
 
-        target_group_arn = response['TargetGroups'][0]['TargetGroupArn']
+        self.target_group_arn = response['TargetGroups'][0]['TargetGroupArn']
 
         self.log+="Creating load balancer...\n"
         response = self.elbClient.create_load_balancer(
@@ -643,7 +640,7 @@ class CloudHandler():
             ]
         )
 
-        load_balancer_arn = response['LoadBalancers'][0]['LoadBalancerArn']
+        self.load_balancer_arn = response['LoadBalancers'][0]['LoadBalancerArn']
         self.elb_dns = response['LoadBalancers'][0]["DNSName"]
 
 
@@ -651,7 +648,7 @@ class CloudHandler():
         self.asgClient.attach_load_balancer_target_groups(
             AutoScalingGroupName = "asg_orm",
             TargetGroupARNs=[
-                target_group_arn,
+                self.target_group_arn,
             ]
         )
 
@@ -659,14 +656,32 @@ class CloudHandler():
         self.elbClient.create_listener(
             DefaultActions=[
                 {
-                    'TargetGroupArn': target_group_arn,
+                    'TargetGroupArn': self.target_group_arn,
                     'Type': 'forward',
                 },
             ],
-            LoadBalancerArn=load_balancer_arn,
+            LoadBalancerArn=self.load_balancer_arn,
             Port=80,
             Protocol='HTTP',
         )
+
+    # Attach load balancing policy to asg
+    def put_scaling_policy_asg(self):
+        # ELB example:  arn:aws:elasticloadbalancing:us-east-2:903616414837:targetgroup/orm-elb-tg/fa5c7fe354316da7
+        # TG example:   arn:aws:elasticloadbalancing:us-east-2:903616414837:loadbalancer/app/orm-elb/cc1f5e2d854217e2
+        response = self.asgClient.put_scaling_policy(
+            AutoScalingGroupName='asg_orm',
+            PolicyName='asg_orm_main_policy',
+            PolicyType='TargetTrackingScaling',
+            TargetTrackingConfiguration={
+                'PredefinedMetricSpecification': {
+                    'PredefinedMetricType': 'ALBRequestCountPerTarget',
+                    'ResourceLabel': f"{self.load_balancer_arn.split(':')[-1].split('/')[1:]}/{self.target_group_arn.split(':')[-1]}",
+                },
+                'TargetValue': 10.0,
+            },
+        )
+        return response
 
     # Write acumulated log info to file    
     def dump_log(self):
@@ -692,6 +707,7 @@ class CloudHandler():
             self.extract_orm_image()
             self.create_auto_scaling_group()
             self.create_elastic_load_balancer()
+            self.put_scaling_policy_asg()
         finally:
             self.dump_log()
             with open('config/dns_name.txt', 'w') as f:
@@ -700,9 +716,10 @@ class CloudHandler():
 if __name__ == '__main__':
     args = sys.argv    
     cloud = CloudHandler()
-    if 'make' in map(lambda x: str.lower(x) ,args):
+    args_low = list(map(lambda x: str.lower(x), args))
+    if 'make' in args_low:
         cloud.construct_ORM()
-    elif 'destroy' in map(lambda x: str.lower(x) ,args):
+    elif 'destroy' in args_low:
         print('Will begin total destruction')
         print("="*45)
         cloud.force_delete_all()
