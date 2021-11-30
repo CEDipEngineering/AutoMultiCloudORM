@@ -1,5 +1,6 @@
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 import time
 import sys
 
@@ -72,11 +73,14 @@ class CloudHandler():
 
     # Forcibly deletes all known infrastructure
     def force_delete_all(self):
-        
-        self.delete_db()
-        self.delete_autoscaling_group()
-        self.delete_elastic_load_balancer()
-        self.delete_orm()
+        try:
+            self.delete_db()
+            self.delete_autoscaling_group()
+            self.delete_elastic_load_balancer()
+            self.delete_orm()
+        except ClientError:
+            time.sleep(30)
+            self.force_delete_all()
 
     # Set flag for deletion
     def ask_delete_all(self):
@@ -669,6 +673,9 @@ class CloudHandler():
     def put_scaling_policy_asg(self):
         # ELB example:  arn:aws:elasticloadbalancing:us-east-2:903616414837:targetgroup/orm-elb-tg/fa5c7fe354316da7
         # TG example:   arn:aws:elasticloadbalancing:us-east-2:903616414837:loadbalancer/app/orm-elb/cc1f5e2d854217e2
+        lba = self.load_balancer_arn.split(':')[-1].split('/')[1:]
+        tga = self.target_group_arn.split(':')[-1]
+        string_label = f"{'/'.join(lba)}/{tga}"
         response = self.asgClient.put_scaling_policy(
             AutoScalingGroupName='asg_orm',
             PolicyName='asg_orm_main_policy',
@@ -676,7 +683,7 @@ class CloudHandler():
             TargetTrackingConfiguration={
                 'PredefinedMetricSpecification': {
                     'PredefinedMetricType': 'ALBRequestCountPerTarget',
-                    'ResourceLabel': f"{self.load_balancer_arn.split(':')[-1].split('/')[1:]}/{self.target_group_arn.split(':')[-1]}",
+                    'ResourceLabel': string_label,
                 },
                 'TargetValue': 10.0,
             },
@@ -707,11 +714,11 @@ class CloudHandler():
             self.extract_orm_image()
             self.create_auto_scaling_group()
             self.create_elastic_load_balancer()
+            with open('config/dns_name.txt', 'w') as f:
+                f.write(self.elb_dns)
             self.put_scaling_policy_asg()
         finally:
             self.dump_log()
-            with open('config/dns_name.txt', 'w') as f:
-                f.write(self.elb_dns)
 
 if __name__ == '__main__':
     args = sys.argv    
